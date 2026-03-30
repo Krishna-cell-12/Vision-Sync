@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import json
 from typing import Optional, Set
 
 import cv2
@@ -57,12 +58,16 @@ class VideoTransformTrack(VideoStreamTrack):
         *,
         inference_every_n_frames: int = 6,
         imgsz: int = 320,
+        spatial_data_channel=None,
+        is_pc_connected=None,
     ):
         super().__init__()  # VideoStreamTrack init
         self.track = track
         self.model = model
         self.inference_every_n_frames = max(1, int(inference_every_n_frames))
         self.imgsz = int(imgsz)
+        self.spatial_data_channel = spatial_data_channel
+        self.is_pc_connected = is_pc_connected
 
         # Low-latency strategy:
         # - Reader pulls frames ASAP and overwrites the latest frame (drops backlog).
@@ -114,6 +119,7 @@ class VideoTransformTrack(VideoStreamTrack):
                     )
 
                     boxes: list[PersonBox] = []
+                    img_width = img.shape[1] if img is not None and len(img.shape) >= 2 else 1
                     for result in results:
                         if result.boxes is None:
                             continue
@@ -145,6 +151,27 @@ class VideoTransformTrack(VideoStreamTrack):
                             flush=True,
                         )
                         self._last_logged_frame = self._frame_index
+
+                    # Send spatial audio + UI hints for the closest person
+                    if self._last_boxes:
+                        closest = min(self._last_boxes, key=lambda b: b.distance_m)
+                        center_x = (closest.x1 + closest.x2) / 2.0
+                        normalized_center = max(0.0, min(1.0, center_x / max(img_width, 1)))
+                        pan = (normalized_center * 2.0) - 1.0  # 0..1 => -1..1
+                        payload = {
+                            "distance": round(float(closest.distance_m), 2),
+                            "pan": round(float(pan), 2),
+                            "label": "person",
+                        }
+                        dc = self.spatial_data_channel
+                        try:
+                            # Safety: send only when channel is open.
+                            pc_ready = bool(self.is_pc_connected()) if callable(self.is_pc_connected) else True
+                            if pc_ready and dc is not None and dc.readyState == "open":
+                                dc.send(json.dumps(payload))
+                        except Exception:
+                            # Don't break the video pipeline if datachannel send fails
+                            pass
 
                 # Draw last known detections on every frame for fluid video
                 for b in self._last_boxes:
@@ -233,6 +260,14 @@ async def offer(payload: OfferPayload):
     pcs.add(pc)
 
     try:
+        # Pre-negotiated data channel to avoid discovery-event handshake issues.
+        spatial_dc = pc.createDataChannel("vision-data", negotiated=True, id=0)
+        print(f"Data Channel {spatial_dc.label} created", flush=True)
+
+        @spatial_dc.on("open")
+        def on_spatial_dc_open():
+            print("DATA CHANNEL IS OPEN", flush=True)
+
         _model = await get_model()
         processed_added = False
 
@@ -242,7 +277,12 @@ async def offer(payload: OfferPayload):
             nonlocal processed_added
             if track.kind == "video" and not processed_added:
                 processed_added = True
-                processed_track = VideoTransformTrack(track, _model)
+                processed_track = VideoTransformTrack(
+                    track,
+                    _model,
+                    spatial_data_channel=spatial_dc,
+                    is_pc_connected=lambda: pc.connectionState == "connected",
+                )
                 pc.addTrack(processed_track)
 
         @pc.on("connectionstatechange")
