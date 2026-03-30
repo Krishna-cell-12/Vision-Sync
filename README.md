@@ -112,6 +112,54 @@ Vision-Sync follows a Client-Server architecture with clear separation of concer
 }
 ```
 
+## Getting Started: Install, Run, Execute
+
+### 1) Prerequisites
+- Python 3.10+ (recommended 3.11)
+- Node.js 18+ / npm 9+
+- `ffmpeg` (optional but recommended for some WebRTC codecs)
+- `mkcert` (for HTTPS in local network, optional but recommended)
+
+### 2) Install backend dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3) Install frontend dependencies
+```bash
+cd frontend
+npm install
+```
+
+### 4) Start backend (FastAPI + WebRTC/YOLO)
+```bash
+# from repository root
+uvicorn server:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 5) Start frontend (React + Vite)
+```bash
+cd frontend
+npm run dev -- --host
+```
+
+### 6) Open client in browser
+- Go to `https://localhost:5173` (or the URL shown in terminal)
+- Allow camera access
+- Click connect/start to initialize WebRTC handshake with `http://localhost:8000/offer`
+
+### 7) Optional secure local HTTPS (recommended for mobile device testing)
+```bash
+cd frontend
+mkcert -install
+mkcert localhost 127.0.0.1 ::1
+# configure vite / backend to use local certs in their respective config
+```
+
+### 8) Quick verification
+- Watch console logs for `WebRTC connection established` and `received metadata` events
+- Confirm live camera feed, overlay, and spatial audio beeps
+
 ## Why This Project Matters
 
 Vision-Sync demonstrates engineering depth across distributed systems, realtime media, CV inference optimization, and human-centered assistive UX. It is intentionally built to highlight practical system design tradeoffs (latency vs. quality, determinism vs. dynamic negotiation, security vs. developer speed) and production-minded debugging methodology.
